@@ -20,10 +20,20 @@ interface IERC20 {
 interface ComptrollerInterface{
     function liquidityOf(address account) external view returns (uint256);
     function borrowOf(address account) external view returns (uint256);
+    function AllowAmountBorrow(address account)external view returns(uint256);
+    function AllowRedeem(address account, uint256 valueAmountRedeem) external view returns(bool);
+    
+
+}
+
+interface oraclePricefeedInterface{
+    
+    function getPrice() external view returns(uint256);
+    
 }
 
 
-contract CToken is IERC20, ComptrollerInterface{
+contract CToken is IERC20, ComptrollerInterface, oraclePricefeedInterface{
     
     address public admin_;
     address underlying_;
@@ -35,20 +45,26 @@ contract CToken is IERC20, ComptrollerInterface{
     string public symbol_;
     uint8 public decimals_;
     address public CompAddr_; 
+    address public myComptrollerAddress_;
     IERC20 tokenContract;
     IERC20 CompContract;
-    constructor(string memory name, string memory symbol, uint8 decimals, address underlying, uint256 initialExchangeRateMantissa) public{
+    ComptrollerInterface ComptrollerAddress_;
+    address OraclePriceFeed_;
+    constructor(string memory name, string memory symbol, uint8 decimals, address underlying, address ComptrollerAddress, address CompAddr, uint256 initialExchangeRateMantissa) public{
         
         name_ = name;
         symbol_ = symbol;
         decimals_ = decimals;
         
-        //CompAddr_ = CompAddr;
+        CompAddr_ = CompAddr;
         underlying_ = underlying;
         initialExchangeRateMantissa_ = initialExchangeRateMantissa;
         tokenContract = IERC20(underlying_);
-        CompContract = IERC20(CompAddr_);
+        CompContract = IERC20(CompAddr); //maybe not used
         admin_ = msg.sender;
+        ComptrollerAddress_ = ComptrollerInterface(ComptrollerAddress);
+        myComptrollerAddress_ = ComptrollerAddress;
+        
     }
     
     using SafeMath for uint256;
@@ -57,6 +73,12 @@ contract CToken is IERC20, ComptrollerInterface{
         require(msg.sender == admin_);
         CompAddr_ = newCompAddr;
         CompContract = IERC20(CompAddr_);
+        return true;
+    }
+    
+    function setNewComptrollerAddress(address newComptrollerAddr) external returns(bool){
+        require(msg.sender == admin_);
+        ComptrollerAddress_ = ComptrollerInterface(newComptrollerAddr);
         return true;
     }
     
@@ -100,6 +122,7 @@ contract CToken is IERC20, ComptrollerInterface{
     function getExchangeRate() internal view returns(uint256){
         return initialExchangeRateMantissa_;
     }
+    
     //mint, reddem, claim CompAddr_
     function mint(uint256 mintAmount) external returns (bool){
       
@@ -110,7 +133,7 @@ contract CToken is IERC20, ComptrollerInterface{
       tokenContract.transferFrom(msg.sender,address(this),mintAmount);
       
       balances[msg.sender] = balances[msg.sender].add(cTokenAmount);
-      calculateComp_mint(balances[msg.sender]);
+      calculateComp_mint(balances[msg.sender]); //We will add interest later
       
       addLiquiduty(msg.sender, mintAmount);
       
@@ -125,6 +148,7 @@ contract CToken is IERC20, ComptrollerInterface{
         uint256 underlyingToken = redeemTokens.div(getExchangeRate());
         require(checkUnderlyingToken(underlyingToken));
         require(checkAmountCToken(msg.sender,redeemTokens));
+        //require(AllowRedeem(msg.sender,underlyingToken.mul(getPrice()))); 
         
       
         tokenContract.transfer(msg.sender,underlyingToken);
@@ -134,7 +158,7 @@ contract CToken is IERC20, ComptrollerInterface{
         
         subLiquidity(msg.sender, underlyingToken);
         
-        calculateComp_redeem(balances[msg.sender]);
+        calculateComp_redeem(balances[msg.sender]); //We will add interest later
         
         return true;
     }
@@ -145,6 +169,7 @@ contract CToken is IERC20, ComptrollerInterface{
         uint256 cTokenAmount = redeemTokens.mul(getExchangeRate());
         require(checkUnderlyingToken(redeemTokens));
         require(checkAmountCToken(msg.sender,cTokenAmount));
+        //require(AllowRedeem(msg.sender,redeemTokens.mul(getPrice())));
         
         tokenContract.transfer(msg.sender,redeemTokens);
         balances[msg.sender] = balances[msg.sender].sub(cTokenAmount);
@@ -152,11 +177,13 @@ contract CToken is IERC20, ComptrollerInterface{
         
         subLiquidity(msg.sender, redeemTokens);
         
-        calculateComp_redeem(balances[msg.sender]);
+        calculateComp_redeem(balances[msg.sender]); //We will add interest later
         
         return true;
        
     }
+    
+    
     
     function calculateComp_mint(uint256 mintAmount) internal returns(bool){
         uint256 CompAmount = calculateComp(startBlock[msg.sender],mintAmount);
@@ -170,7 +197,7 @@ contract CToken is IERC20, ComptrollerInterface{
     }
     
     function calculateComp_redeem(uint256 redeemAmount) internal returns(bool){
-        CompContract.transfer(msg.sender,calculateComp(startBlock[msg.sender],redeemAmount));
+        ClaimComp(calculateComp(startBlock[msg.sender],redeemAmount));
         Compbalances[msg.sender] = Compbalances[msg.sender].sub(calculateComp(startBlock[msg.sender],redeemAmount));
         startBlock[msg.sender] = block.timestamp;
         
@@ -178,17 +205,21 @@ contract CToken is IERC20, ComptrollerInterface{
         
     }
     
+    function ClaimComp(uint256 amount) public {
+        CompContract.transferFrom(myComptrollerAddress_,msg.sender,amount);
+    }
+
     function addLiquiduty(address account, uint256 amount) internal returns(bool){
-        liquidity[account] = liquidity[account].add(amount);
+        liquidity[account] = liquidity[account].add(amount.mul(getPrice()));
         return true;
     }
     
     function subLiquidity(address account, uint256 amount) internal returns(bool){
-        if (!(liquidity[account]>=amount)){
+        if (!(liquidity[account]>=amount.mul(getPrice()))){
             return false;
         }
         else{
-            liquidity[account] = liquidity[account].sub(amount);
+            liquidity[account] = liquidity[account].sub(amount.mul(getPrice()));
             return true;
         }
     }
@@ -197,29 +228,60 @@ contract CToken is IERC20, ComptrollerInterface{
     //borrow and repayBorrow function
     
     function liquidityOf(address account) public override view returns(uint256){
-        return liquidity[account];
+        return liquidity[account].mul(getPrice());
     }
     
     function borrowOf(address account) public override view returns(uint256){
-        return borrowBalance[account];
+        return borrowBalance[account].mul(getPrice());
     }
     
-    function
+    function AllowAmountBorrow(address account) public override view returns(uint256){
+        return ComptrollerAddress_.AllowAmountBorrow(account);
+        
+    }
+    
+    function AllowRedeem(address account, uint256 valueAmountRedeem) public override view returns(bool){
+        return ComptrollerAddress_.AllowRedeem(account, valueAmountRedeem);
+    }
+    
+
     
     function borrow(uint256 borrowAmount) external returns (bool){
-        require(AllowedBorrow(msg.sender/*,borrowAmount*/)); 
+        //require(AllowedBorrow(msg.sender,borrowAmount)); 
+        
         tokenContract.transfer(msg.sender,borrowAmount);
+        borrowBalance[msg.sender] = borrowBalance[msg.sender].add(borrowAmount);
         return true;
     }
-    
+    //not finished yet
     function repayBorrow(uint256 repayAmount) external returns (bool){
+        //require(AllowRepayBorrow(msg.sender,repayAmount));
         tokenContract.transferFrom(msg.sender,address(this),repayAmount);
+        borrowBalance[msg.sender] = borrowBalance[msg.sender].sub(repayAmount);
         return true;
     }
     
     //not finished yet
-    function AllowedBorrow(address account/*,uint256 borrowAmount*/) internal view returns (bool){
-        if (liquidity[account] <= 0) {
+    function AllowedBorrow(address account,uint256 borrowAmount) internal view returns (bool){
+        
+        
+        if (AllowAmountBorrow(account) < (borrowAmount.mul(getPrice()))*80/100){
+          
+        
+            //return false; 
+            return true;
+            
+        }
+        else {
+           // return true; 
+           return true;
+            
+        }
+    
+    }
+    
+    function AllowRepayBorrow(address account, uint256 repayAmount) internal view returns(bool){
+        if (repayAmount > borrowBalance[account]){
             return false;
         }
         else{
@@ -237,6 +299,33 @@ contract CToken is IERC20, ComptrollerInterface{
         return Compbalances[sender];
     }
     
+    // check & set OraclePriceFeed
+    function setOraclePrice(address OracleAddress) external returns(address){
+        require(msg.sender == admin_);
+        OraclePriceFeed_ = OracleAddress;
+    }
+    
+    function checkOraclePriceFeed() internal view returns(bool){
+        if (OraclePriceFeed_ == address(0)){
+            return false;
+        }
+        else{
+            return true;
+        }
+    }
+    
+    function getPrice() public override view returns(uint256){
+        
+        
+        if (!checkOraclePriceFeed()){
+            return 1;
+        }
+        else{
+            oraclePricefeedInterface oraclePriceContract = oraclePricefeedInterface(OraclePriceFeed_);
+            return oraclePriceContract.getPrice();
+        }
+    }
+    
     function admin() external view returns (address){
         return admin_;
     }
@@ -247,7 +336,7 @@ contract CToken is IERC20, ComptrollerInterface{
         
         uint256 currentblock = block.timestamp;
         uint256 lengthPeriod = currentblock.sub(initialblock);
-        uint256 rate = tokenAmount.mul(4*60*24/0.2/50);
+        uint256 rate = (tokenAmount.mul(getPrice())).mul(4*60*24/0.2/50);
         uint256 CompAmount = lengthPeriod.mul(rate);
         
         return CompAmount;
@@ -266,6 +355,7 @@ contract CToken is IERC20, ComptrollerInterface{
     mapping(address => uint) startBlock;
     mapping(address => uint256) liquidity;
     mapping(address => uint256) borrowBalance;
+   
     
     
 
@@ -310,7 +400,6 @@ contract CToken is IERC20, ComptrollerInterface{
     }
     
 }
-
 
 
 
