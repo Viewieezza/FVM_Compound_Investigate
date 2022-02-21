@@ -5,8 +5,8 @@
 Deploy all necessary contract
 
 1. Token.sol
-2. Comptroller.sol
-3. CToken.sol (deploy 2-3 contracts)
+2. myComptroller.sol
+3. myCToken.sol (deploy 2-3 contracts)
 
 Set CToken's constructure with Comptroller address from deployed Comptroller.sol.
 
