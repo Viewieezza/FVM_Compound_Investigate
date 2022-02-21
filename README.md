@@ -6,7 +6,7 @@ Deploy all necessary contract
 
 1. Token.sol
 2. myComptroller.sol
-3. myCToken.sol (deploy 2-3 contracts)
+3. myCToken.sol (deploy 2 times)
 
 Set CToken's constructure with Comptroller address from deployed myComptroller.sol.
 
@@ -14,7 +14,7 @@ Set CToken's constructure with Comptroller address from deployed myComptroller.s
 constructor(string memory name, string memory symbol, uint8 decimals, address underlying, address ComptrollerAddress, address CompAddr, uint256 initialExchangeRateMantissa) public{}
 ```
 
-Next call function addToMarket() in Comptroller contract and inputs are 2-3 CToken address that we deployed.
+Next call function addToMarket() in Comptroller contract and inputs are 2 CToken address that we deployed.
 
 ```javascript
 function addToMarket(address CTokenAddress) external returns(bool){}
