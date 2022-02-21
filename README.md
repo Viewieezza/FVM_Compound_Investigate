@@ -8,7 +8,7 @@ Deploy all necessary contract
 2. myComptroller.sol
 3. myCToken.sol (deploy 2-3 contracts)
 
-Set CToken's constructure with Comptroller address from deployed Comptroller.sol.
+Set CToken's constructure with Comptroller address from deployed myComptroller.sol.
 
 ```javascript
 constructor(string memory name, string memory symbol, uint8 decimals, address underlying, address ComptrollerAddress, address CompAddr, uint256 initialExchangeRateMantissa) public{}
